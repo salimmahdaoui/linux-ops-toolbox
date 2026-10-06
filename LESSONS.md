@@ -18,3 +18,31 @@ line number, printed the variable type with print(type(x))")
 - Never crash on bad input: count it instead
 
 **What I'd do differently:** (e.g. "use datetime from the start instead of slicing text")
+
+
+============================================================================
+* healthcheck of the server
+    - Define threshold: disk 80%, memory 90%, load = cores × 1.0 
+    - Define a function for each check. Each prints a line (OK or WARN) and records if it failed.
+    - At the end, exit 0 if everything is fine, or exit 1 if any check failed.
+
+* Architecture
+healthcheck.sh
+│
+├── Configuration des seuils
+│
+├── check_disk()
+│
+├── check_memory()
+│
+├── check_cpu_load()
+│
+├── check_services()
+│
+├── Affichage du rapport
+│
+└── exit $STATUS
+
+* command used 
+    - disque (DISK) => man df 
+
