@@ -45,4 +45,5 @@ healthcheck.sh
 
 * command used 
     - disque (DISK) => man df 
+    - Memoire (MEMMORY) => man free
 
