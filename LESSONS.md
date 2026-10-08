@@ -46,4 +46,6 @@ healthcheck.sh
 * command used 
     - disque (DISK) => man df 
     - Memoire (MEMMORY) => man free
-
+    - Load CPU => man uptime   AND man nproc
+    - Services => man systemctl 
+    - also i use command like awk, tr , wc (word counting ) 
