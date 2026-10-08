@@ -1,13 +1,17 @@
 #!/bin/bash
-
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+echo -e " ${YELLOW}=========================================="
+echo "         System Health Check "
+echo -e "========================================= ${NC}"
 
 DISK_THRESHOLD=80
 MEMORY_THRESHOLD=80
 LOAD_THRESHOLD=2 # selon la machine ou le serveur 
 STATUS=0
 
-uptime | awk -F'load average: ' '{print $2}' | cut -d',' -f1 
-uptime | awk '{print $9}' | tr -d ','
 
 Check_DISK() {
 	DISK_USAGE=$(df -h / |tail -1 | awk '{print $5}' | tr -d '%'  )
@@ -78,13 +82,13 @@ fi
 Check_services() {
 #	Nm_service_failed=$( systemctl --failed -no-legend | wc -l  ) ça oui ça marche mais pas optimale car elle compte toutes les ligne sois vides ou non vides
 	
-	Nm_service_failed= $(systemctl --failed --no-legend --plain | grep -c .)
+	Nm_service_failed=$( systemctl --failed --no-legend --plain | grep -c . )
 	echo "==============[SERVICES]==================" 
 	
 	if [ $Nm_service_failed > 0  ] ;then
 			
 			echo " STATUS : CRITICAL"
-			echo " Number of services failed are : $Nm_service_failed "
+			echo " Number of services failed : $Nm_service_failed "
 			return 0
 		else 
 			echo " STATUS : OK " 
@@ -94,6 +98,16 @@ Check_services() {
 }
 if ! Check_services; then 
 	STATUS=1
+fi
+
+if [ "$STATUS" -eq 1 ];then
+		echo -e "${RED}==========================="
+		echo "      System Critical"
+		echo -e "===========================${NC}"
+	else 
+		echo -e "${GREEN}==========================="
+		echo "        System Clean"
+		echo -e "================================ ${NC}"
 fi
 
 exit "$STATUS"
