@@ -49,3 +49,25 @@ healthcheck.sh
     - Load CPU => man uptime   AND man nproc
     - Services => man systemctl 
     - also i use command like awk, tr , wc (word counting ) 
+
+
+* BACKUP LAB 
+
+backup.sh
+│
+├── 1. Vérifier les paramètres
+├── 2. Créer le backup compressé
+├── 3. Nommer le backup avec la date  et tester Intégrité de la compression >"gzip -t " et Structure des données >"tar  -tzf"
+├── 4. Calculer une empreinte SHA-256
+├── 5. Vérifier l'intégrité
+├── 6. Classer les backups
+│      ├── daily   → 7
+│      ├── weekly  → 4
+│      └── monthly → 12
+├── 7. Supprimer les anciennes copies
+├── 8. Afficher un résumé
+└── 9. Retourner un exit code
+
+
+
+
