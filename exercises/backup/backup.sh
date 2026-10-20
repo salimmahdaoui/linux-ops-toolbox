@@ -101,8 +101,8 @@ create_backup() {
         return 1
     fi
     
-    echo -e "${YELLOW}===================****=================="
-    echo -e "${GREEN} DAILY Backup CREATED AND SHA VERIFIED \n File name :  $backup_file ${NC}"
+    echo -e "${YELLOW}====================================="
+    echo -e "${GREEN} Backup CREATED AND SHA VERIFIED \n File name :  $backup_file ${NC}"
     echo -e " ${YELLOW}==============================${NC}"
     return 0
 }
