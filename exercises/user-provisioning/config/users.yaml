@@ -1,0 +1,16 @@
+
+users:
+  - username: lab_alice
+    shell: /bin/bash
+    groups:
+      - developers
+    ssh_key: "REPLACE_WITH_A_TEST_PUBLIC_KEY"
+    sudo: false
+
+  - username: lab_bob
+    shell: /bin/bash
+    groups:
+      - operators
+    ssh_key: "REPLACE_WITH_ANOTHER_TEST_PUBLIC_KEY"
+    sudo: true
+
