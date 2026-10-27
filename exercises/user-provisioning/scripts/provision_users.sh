@@ -156,11 +156,52 @@ validate_user_settings(){
 	
 }
 
+validate_security_settings() {
+    local username ssh_key sudo_value
+
+    while IFS= read -r username; do
+        ssh_key="$(yq -r \
+            ".users[] | select(.username == \"$username\") | .ssh_key // \"\"" \
+            "$CONFIG_FILE")" || return 1
+
+        sudo_value="$(yq -r \
+            ".users[] | select(.username == \"$username\") | .sudo" \
+            "$CONFIG_FILE")" || return 1
+
+        # Validate the sudo field
+        if [[ "$sudo_value" != "true" && "$sudo_value" != "false" ]]; then
+            error "The sudo field must be true or false for user: $username"
+            return 1
+        fi
+
+        # Validate that an SSH public key is provided
+        if [[ -z "$ssh_key" || "$ssh_key" == "null" ]]; then
+            error "Missing SSH public key for user: $username"
+            return 1
+        fi
+
+        # Reject placeholders and unsupported key formats
+        case "$ssh_key" in
+            ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
+                ;;
+            *)
+                error "Invalid SSH public key format for user: $username"
+                return 1
+                ;;
+        esac
+
+        log "* Security settings validated for user: $username"
+    done < <(yq -r '.users[].username' "$CONFIG_FILE")
+
+    log "Security settings validation passed."
+}
+
 main() {
     check_dependencies || exit 1
     validate_config || exit 1
     validate_usernames || exit 1
     validate_user_settings || exit 1
+    validate_security_settings || exit 1
     log "Validation stage completed. No system changes were made."
 }
 

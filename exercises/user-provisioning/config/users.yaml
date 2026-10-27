@@ -4,7 +4,7 @@ users:
     shell: /bin/bash
     groups:
       - developers
-    ssh_key: "REPLACE_WITH_A_TEST_PUBLIC_KEY"
+    ssh_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJxshLIeowWDsiikEtJ5C6eLroe9to+TE/GHSu5m8Y5 salim@salim-VMware-Virtual-Platform
     sudo: false
 
   - username: lab_bob
