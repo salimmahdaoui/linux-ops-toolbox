@@ -180,21 +180,42 @@ validate_security_settings() {
             return 1
         fi
 
-        # Reject placeholders and unsupported key formats
-        case "$ssh_key" in
-            ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
-                ;;
-            *)
-                error "Invalid SSH public key format for user: $username"
-                return 1
-                ;;
-        esac
+#        # Reject placeholders and unsupported key formats
+#        case "$ssh_key" in
+#            ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
+#                ;;
+#            *)
+#                error "Invalid SSH public key format for user: $username"
+#                return 1
+#               ;;
+#        esac
+
+	local key_file
+        key_file="$(mktemp)" || {
+            error "Could not create temporary file for SSH key validation."
+            return 1
+        }
+	if ! printf '%s\n' "$ssh_key" > "$key_file"; then
+            rm -f "$key_file"
+            error "Could not write temporary SSH key for user: $username"
+            return 1
+        fi
+	if ! ssh-keygen -l -f "$key_file" >/dev/null 2>&1; then
+            rm -f "$key_file"
+            error "Invalid SSH public key for user: $username"
+            return 1
+        fi
+	echo "this is the file key => $key_file"
+	cat "$key_file"
+	rm -f "$key_file"
 
         log "* Security settings validated for user: $username"
     done < <(yq -r '.users[].username' "$CONFIG_FILE")
 
     log "Security settings validation passed."
 }
+
+
 
 main() {
     check_dependencies || exit 1
