@@ -205,8 +205,8 @@ validate_security_settings() {
             error "Invalid SSH public key for user: $username"
             return 1
         fi
-	echo "this is the file key => $key_file"
-	cat "$key_file"
+	#echo "this is the file key => $key_file"
+	#cat "$key_file"
 	rm -f "$key_file"
 
         log "* Security settings validated for user: $username"
@@ -215,15 +215,90 @@ validate_security_settings() {
     log "Security settings validation passed."
 }
 
+# Il bloque toutes les actions destructrices ou modificatrices sur le système. Le script lit le fichier de configuration, fait toutes ses vérifications, mais au moment d'agir (créer un utilisateur, modifier un groupe, ajouter une clé SSH), il s'arrête, simule l'action et affiche simplement ce qu'il aurait fait à l'écran (souvent préfixé par [DRY-RUN])
+# Tester sans risque
+# Auditer les changements
+#
+DRY_RUN=false
+parse_arguments() {
+     case "${1:-}" in
+        "")
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--dry-run]"
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            echo "Usage: $0 [--dry-run]"
+            exit 2
+            ;;
+    esac
+}
 
+# Implémenter ensure_group()
+# Si le groupe existe déjà : ne rien modifier.
+# S'il n'existe pas : le créer avec groupadd.
+# Si --dry-run est activé : afficher l'action prévue sans créer le groupe.
+
+# la cration des groups et des users necessite les provoléges ADMIN sudo
+check_root() {
+    if [[ "$EUID" -ne 0 ]]; then
+        error "This script must be run as root."
+        return 1
+    fi
+}
+
+ensure_group() {
+    local group="$1"
+
+    if getent group "$group" >/dev/null 2>&1; then
+        log "Group already exists: $group"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY-RUN] Would create group: $group"
+        return 0
+    fi
+
+    log "Creating group: $group"
+
+    if ! groupadd "$group"; then
+        error "Failed to create group: $group"
+        return 1
+    fi
+
+    log "Group created successfully: $group"
+}
+provision_groups() {
+    local group
+
+    log "Starting group provisioning..."
+
+    while IFS= read -r group; do
+        ensure_group "$group" || return 1
+    done < <(yq -r '.users[].groups[]' "$CONFIG_FILE")
+
+    log "Group provisioning completed."
+}
 
 main() {
-    check_dependencies || exit 1
-    validate_config || exit 1
-    validate_usernames || exit 1
-    validate_user_settings || exit 1
-    validate_security_settings || exit 1
-    log "Validation stage completed. No system changes were made."
+	parse_arguments "$@" || exit $?
+    	check_dependencies || exit 1
+	validate_config || exit 1
+	validate_usernames || exit 1
+	validate_user_settings || exit 1
+	validate_security_settings || exit 1
+	#log "Validation stage completed. No system changes were made."
+	if [[ "$DRY_RUN" != true ]]; then
+        	check_root || exit 1
+	fi 	
+	provision_groups || exit 1
+	log "Provisioning stage completed."
 }
 
 main "$@"
