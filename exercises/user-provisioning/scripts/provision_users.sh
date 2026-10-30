@@ -431,10 +431,13 @@ ensure_sudo_rule() {
         return 1
     		}
 
-	printf '%s\n' "$rule" > "$temp_file" || {
+	{
+    	echo '# Managed by provision_users.sh'
+    	echo "$rule" 
+	} > "$temp_file" || {
         rm -f "$temp_file"
         return 1
-    		}
+    	}
 	chmod 0440 "$temp_file"
 	
 	# we use visudo -c to check the syntax of permissions is ok or not, to avoid craching our server 
@@ -459,6 +462,64 @@ ensure_sudo_rule() {
 
 }
 
+remove_sudo_rule() {
+    local username="$1"
+    local sudo_file="/etc/sudoers.d/$username"
+    local backup_file
+
+    # Nothing to remove
+   	if [[ ! -f "$sudo_file" ]]; then
+		log "No sudo (False) rule found for: $username"
+        	return 0
+    	fi
+
+    # Only remove files managed by this script
+    	if ! grep -Fqx '# Managed by provision_users.sh' "$sudo_file"; then
+        	error "Refusing to remove unmanaged sudoers file: $sudo_file"
+        	return 1
+    	fi
+
+    	if [[ "$DRY_RUN" == true ]]; then
+        	log "[DRY-RUN] Would remove sudo for: $username"
+        	return 0
+    	fi
+
+    # Keep a backup in case global validation fails
+   	 backup_file="$(mktemp)" || {
+        error "Could not create sudoers backup."
+        return 1
+    }
+
+    	cp -p "$sudo_file" "$backup_file" || {
+        rm -f "$backup_file"
+        error "Could not back up sudo rule for: $username"
+        return 1
+    }
+
+   	if ! rm -f -- "$sudo_file"; then
+        	rm -f "$backup_file"
+        	error "Failed to remove sudo rule for: $username"
+        	return 1
+    	fi
+
+    # Validate the complete sudoers configuration
+    	if ! visudo -c >/dev/null; then
+        	error "Global sudoers validation failed. Restoring previous rule."
+
+        	install -o root -g root -m 0440 "$backup_file" "$sudo_file" || {
+            	error "CRITICAL: Could not restore sudo rule for: $username"
+            	rm -f "$backup_file"
+            	return 1
+        }
+
+        	rm -f "$backup_file"
+        	return 1
+    	fi
+
+    	rm -f "$backup_file"
+    	log "Sudo removed for: $username"
+}
+
 provision_sudo() {
 
 	local username
@@ -473,9 +534,12 @@ provision_sudo() {
 
         	if [[ "$sudo_value" == "true" ]]; then
             		ensure_sudo_rule "$username" || return 1
-        	else
-           		 log "No additional sudo access requested for: $username"
-        	fi
+        	elif [[ "$sudo_value" == "false" ]]; then
+    			remove_sudo_rule "$username" || return 1
+		else
+        		error "Invalid sudo value for: $username"
+    			return 1
+		fi
 
     	done < <(yq -r '.users[].username' "$CONFIG_FILE")
 
