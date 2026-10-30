@@ -244,7 +244,7 @@ parse_arguments() {
 # S'il n'existe pas : le créer avec groupadd.
 # Si --dry-run est activé : afficher l'action prévue sans créer le groupe.
 
-# la cration des groups et des users necessite les provoléges ADMIN sudo
+# la criation des groups et des users necessite les provoléges ADMIN sudo
 check_root() {
     if [[ "$EUID" -ne 0 ]]; then
         error "This script must be run as root."
@@ -286,6 +286,135 @@ provision_groups() {
     log "Group provisioning completed."
 }
 
+# add user 
+# mannuelement useradd -m -s /bin/bash -G developers lab_Salim
+
+ensure_user() {
+	local username="$1"
+	local shell_name="$2"
+	local groups="$3"
+	
+	if id "$username" >/dev/null 2>&1; then
+        	log "User already exists: $username"
+        	return 0
+	fi
+	if [[ "$DRY_RUN" == true ]]; then
+        	log "[DRY-RUN] Would create user: $username"
+        	log "[DRY-RUN] Shell: $shell_name"
+        	log "[DRY-RUN] Groups: $groups"
+        	return 0
+	fi
+	log "Creating user: $username"
+
+	if ! useradd -m -s "$shell_name" -G "$groups" "$username"; then
+        	error "Failed to create user: $username"
+        	return 1
+    	fi
+	log "User created successfully: $username"
+}
+
+provision_users() {
+	local username
+    	local shell_name
+    	local groups
+
+	log "Starting user provisioning..."
+	
+	while IFS= read -r username; do
+
+        	shell_name="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .shell" \
+            		"$CONFIG_FILE")" || return 1
+
+        	groups="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .groups | join(\",\")" \
+            		"$CONFIG_FILE")" || return 1
+
+        	ensure_user "$username" "$shell_name" "$groups" || return 1
+
+	done < <(yq -r '.users[].username' "$CONFIG_FILE")
+	log "User provisioning completed."
+}
+
+# permettre à chaque utilisateur de se connecter avec sa clé publique SSH. 
+ensure_ssh_key() {
+	
+	local username="$1"
+    	local ssh_key="$2"
+    	local primary_group
+    	local ssh_dir="/home/$username/.ssh"
+    	local authorized_keys="$ssh_dir/authorized_keys"
+
+#    	primary_group="$(id -gn "$username")" || {
+		# ============ NOTE ===========
+			# should this condition or variable's extraction happen after the condition
+			#  of ======  DRY-RUN ============
+#        	error "Cannot determine primary group for $username"
+#        	return 1
+#    	}
+
+    	if [[ "$DRY_RUN" == true ]]; then
+        	log "[DRY-RUN] Would install SSH key for: $username"
+        	log "[DRY-RUN] SSH directory: $ssh_dir (700)"
+        	log "[DRY-RUN] authorized_keys: (600)"
+        	return 0
+    	fi
+
+        primary_group="$(id -gn "$username")" || {
+                error "Cannot determine primary group for $username"
+                return 1
+        }
+
+	# Create the SSH directory with secure permissions
+    	install -d -m 700 -o "$username" -g "$primary_group" "$ssh_dir" || {
+        	error "Failed to create SSH directory for $username"
+        	return 1
+    		}
+	# Create authorized_keys if it does not exist
+    	if [[ ! -e "$authorized_keys" ]]; then
+        	install -m 600 -o "$username" -g "$primary_group" \
+            	/dev/null "$authorized_keys" || return 1
+    	fi
+
+	# Avoid installing the same key twice
+    	if grep -Fqx -- "$ssh_key" "$authorized_keys"; then
+        	log "SSH key already installed for: $username"
+        	return 0
+    	fi
+
+	if ! printf '%s\n' "$ssh_key" >> "$authorized_keys"; then
+        	error "Failed to install SSH key for: $username"
+        	return 1
+    	fi
+
+    	chown "$username:$primary_group" "$authorized_keys" || return 1
+    	chmod 600 "$authorized_keys" || return 1
+
+    	log "SSH key installed for: $username"
+	
+}
+
+provision_ssh_keys() { 
+	
+	local username
+    	local ssh_key
+
+    	log "Starting SSH key provisioning..."
+
+    	while IFS= read -r username; do
+
+        	ssh_key="$(yq -r \
+            	".users[] | select(.username == \"$username\") | .ssh_key" \
+            	"$CONFIG_FILE")" || return 1
+
+        	ensure_ssh_key "$username" "$ssh_key" || return 1
+
+    	done < <(yq -r '.users[].username' "$CONFIG_FILE")
+
+    	log "SSH key provisioning completed."
+
+}
+
 main() {
 	parse_arguments "$@" || exit $?
     	check_dependencies || exit 1
@@ -298,6 +427,8 @@ main() {
         	check_root || exit 1
 	fi 	
 	provision_groups || exit 1
+	provision_users || exit 1
+	provision_ssh_keys || exit 1
 	log "Provisioning stage completed."
 }
 
