@@ -157,60 +157,68 @@ validate_user_settings(){
 }
 
 validate_security_settings() {
-    local username ssh_key sudo_value
+    
+	local username ssh_key sudo_value sudo_type key_type key_file
+	
+	while IFS= read -r username; do
 
-    while IFS= read -r username; do
-        ssh_key="$(yq -r \
-            ".users[] | select(.username == \"$username\") | .ssh_key // \"\"" \
-            "$CONFIG_FILE")" || return 1
+        # Read SSH key and sudo value.
+       		ssh_key="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .ssh_key // \"\"" \
+            		"$CONFIG_FILE")" || return 1
 
-        sudo_value="$(yq -r \
-            ".users[] | select(.username == \"$username\") | .sudo" \
-            "$CONFIG_FILE")" || return 1
+        	sudo_value="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .sudo" \
+            		"$CONFIG_FILE")" || return 1
 
-        # Validate the sudo field
-        if [[ "$sudo_value" != "true" && "$sudo_value" != "false" ]]; then
-            error "The sudo field must be true or false for user: $username"
-            return 1
-        fi
+        	sudo_type="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .sudo | tag" \
+            		"$CONFIG_FILE")" || return 1
 
-        # Validate that an SSH public key is provided
-        if [[ -z "$ssh_key" || "$ssh_key" == "null" ]]; then
-            error "Missing SSH public key for user: $username"
-            return 1
-        fi
+        	key_type="$(yq -r \
+            		".users[] | select(.username == \"$username\") | .ssh_key | tag" \
+            		"$CONFIG_FILE")" || return 1
 
-#        # Reject placeholders and unsupported key formats
-#        case "$ssh_key" in
-#            ssh-ed25519\ *|ssh-rsa\ *|ecdsa-sha2-nistp256\ *|ecdsa-sha2-nistp384\ *|ecdsa-sha2-nistp521\ *)
-#                ;;
-#            *)
-#                error "Invalid SSH public key format for user: $username"
-#                return 1
-#               ;;
-#        esac
+        # Validate YAML boolean type.
+        	if [[ "$sudo_type" != "!!bool" ]]; then
+            		error "The sudo field must be a YAML boolean for: $username"
+            		return 1
+        	fi
 
-	local key_file
-        key_file="$(mktemp)" || {
-            error "Could not create temporary file for SSH key validation."
-            return 1
-        }
-	if ! printf '%s\n' "$ssh_key" > "$key_file"; then
-            rm -f "$key_file"
-            error "Could not write temporary SSH key for user: $username"
-            return 1
-        fi
-	if ! ssh-keygen -l -f "$key_file" >/dev/null 2>&1; then
-            rm -f "$key_file"
-            error "Invalid SSH public key for user: $username"
-            return 1
-        fi
-	#echo "this is the file key => $key_file"
-	#cat "$key_file"
-	rm -f "$key_file"
+        	if [[ "$sudo_value" != "true" && "$sudo_value" != "false" ]]; then
+            		error "Invalid sudo value for: $username"
+        	    	return 1
+        	fi
 
-        log "* Security settings validated for user: $username"
-    done < <(yq -r '.users[].username' "$CONFIG_FILE")
+        # Validate SSH key type and presence.
+        	if [[ "$key_type" != "!!str" || -z "$ssh_key" ]]; then
+            		error "Missing or invalid SSH public key for: $username"
+            		return 1
+        	fi
+
+        # Create temporary file for SSH key validation.
+        	key_file="$(mktemp)" || {
+            		error "Could not create temporary SSH validation file."
+            		return 1
+        		}
+
+        	if ! printf '%s\n' "$ssh_key" > "$key_file"; then
+            		rm -f "$key_file"
+            		error "Could not write SSH key for: $username"
+            		return 1
+        	fi
+
+        	if ! ssh-keygen -l -f "$key_file" >/dev/null 2>&1; then
+            		rm -f "$key_file"
+            		error "Invalid SSH public key for: $username"
+            		return 1
+        	fi
+
+        	rm -f "$key_file"
+
+        	log "Security settings validated for: $username"
+
+    	done < <(yq -r '.users[].username' "$CONFIG_FILE")
 
     log "Security settings validation passed."
 }
@@ -281,7 +289,7 @@ provision_groups() {
 
     while IFS= read -r group; do
         ensure_group "$group" || return 1
-    done < <(yq -r '.users[].groups[]' "$CONFIG_FILE")
+    done < <(yq -r '.users[].groups[]' "$CONFIG_FILE" | sort -u)
 
     log "Group provisioning completed."
 }
@@ -290,29 +298,66 @@ provision_groups() {
 # mannuelement useradd -m -s /bin/bash -G developers lab_Salim
 
 ensure_user() {
-	local username="$1"
-	local shell_name="$2"
-	local groups="$3"
-	
-	if id "$username" >/dev/null 2>&1; then
-        	log "User already exists: $username"
-        	return 0
-	fi
-	if [[ "$DRY_RUN" == true ]]; then
-        	log "[DRY-RUN] Would create user: $username"
-        	log "[DRY-RUN] Shell: $shell_name"
-        	log "[DRY-RUN] Groups: $groups"
-        	return 0
-	fi
-	log "Creating user: $username"
+    local username="$1"
+    local shell_name="$2"
+    local groups="$3"
+    local current_shell
 
-	if ! useradd -m -s "$shell_name" -G "$groups" "$username"; then
-        	error "Failed to create user: $username"
-        	return 1
-    	fi
-	log "User created successfully: $username"
+    # Check whether the user already exists.
+    if id "$username" >/dev/null 2>&1; then
+        log "User already exists: $username"
+
+        current_shell="$(getent passwd "$username" | cut -d: -f7)"
+
+        if [[ "$current_shell" != "$shell_name" ]]; then
+            if [[ "$DRY_RUN" == true ]]; then
+                log "[DRY-RUN] Would update shell for $username: $current_shell -> $shell_name"
+            else
+                if ! usermod -s "$shell_name" "$username"; then
+                    error "Failed to update shell for: $username"
+                    return 1
+                fi
+                log "Shell updated for: $username"
+            fi
+        fi
+
+        if [[ "$DRY_RUN" == true ]]; then
+            log "[DRY-RUN] Would reconcile supplementary groups for: $username ($groups)"
+        elif [[ -n "$groups" ]]; then
+            if ! usermod -G "$groups" "$username"; then
+                error "Failed to update groups for: $username"
+                return 1
+            fi
+            log "Groups updated for: $username"
+        fi
+
+        return 0
+    fi
+
+    # Dry-run: do not create anything.
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY-RUN] Would create user: $username"
+        log "[DRY-RUN] Shell: $shell_name"
+        log "[DRY-RUN] Groups: $groups"
+        return 0
+    fi
+
+    log "Creating user: $username"
+
+    if [[ -n "$groups" ]]; then
+        if ! useradd -m -s "$shell_name" -G "$groups" "$username"; then
+            error "Failed to create user: $username"
+            return 1
+        fi
+    else
+        if ! useradd -m -s "$shell_name" "$username"; then
+            error "Failed to create user: $username"
+            return 1
+        fi
+    fi
+
+    log "User created successfully: $username"
 }
-
 provision_users() {
 	local username
     	local shell_name
@@ -326,9 +371,9 @@ provision_users() {
             		".users[] | select(.username == \"$username\") | .shell" \
             		"$CONFIG_FILE")" || return 1
 
-        	groups="$(yq -r \
-            		".users[] | select(.username == \"$username\") | .groups | join(\",\")" \
-            		"$CONFIG_FILE")" || return 1
+		groups="$(yq -r \
+    			".users[] | select(.username == \"$username\") | (.groups // []) | join(\",\")" \
+    			"$CONFIG_FILE")" || return 1
 
         	ensure_user "$username" "$shell_name" "$groups" || return 1
 
@@ -337,61 +382,98 @@ provision_users() {
 }
 
 # permettre à chaque utilisateur de se connecter avec sa clé publique SSH. 
+
 ensure_ssh_key() {
-	
-	local username="$1"
+    	local username="$1"
     	local ssh_key="$2"
     	local primary_group
     	local ssh_dir="/home/$username/.ssh"
     	local authorized_keys="$ssh_dir/authorized_keys"
-
-#    	primary_group="$(id -gn "$username")" || {
-		# ============ NOTE ===========
-			# should this condition or variable's extraction happen after the condition
-			#  of ======  DRY-RUN ============
-#        	error "Cannot determine primary group for $username"
-#        	return 1
-#    	}
+    	local temp_file
 
     	if [[ "$DRY_RUN" == true ]]; then
         	log "[DRY-RUN] Would install SSH key for: $username"
         	log "[DRY-RUN] SSH directory: $ssh_dir (700)"
-        	log "[DRY-RUN] authorized_keys: (600)"
+        	log "[DRY-RUN] authorized_keys: $authorized_keys (600)"
         	return 0
     	fi
 
-        primary_group="$(id -gn "$username")" || {
-                error "Cannot determine primary group for $username"
-                return 1
-        }
+    # Get the user's primary group.
+    	primary_group="$(id -gn "$username")" || {
+        error "Cannot determine primary group for: $username"
+        return 1
+    	}
 
-	# Create the SSH directory with secure permissions
-    	install -d -m 700 -o "$username" -g "$primary_group" "$ssh_dir" || {
-        	error "Failed to create SSH directory for $username"
+    # Refuse to follow a symbolic link.
+    	if [[ -L "/home/$username/.ssh" ]]; then
+        	error "Refusing to use symbolic link: $ssh_dir"
         	return 1
-    		}
-	# Create authorized_keys if it does not exist
-    	if [[ ! -e "$authorized_keys" ]]; then
-        	install -m 600 -o "$username" -g "$primary_group" \
-            	/dev/null "$authorized_keys" || return 1
     	fi
 
-	# Avoid installing the same key twice
-    	if grep -Fqx -- "$ssh_key" "$authorized_keys"; then
+    # Create the SSH directory with secure permissions.
+    	if ! install -d -m 700 \
+        	-o "$username" -g "$primary_group" "$ssh_dir"; then
+        	error "Failed to create SSH directory for: $username"
+        	return 1
+    	fi
+
+    # Refuse to overwrite a symbolic link or non-regular file.
+    	if [[ -L "$authorized_keys" || ( -e "$authorized_keys" && ! -f "$authorized_keys" ) ]]; then
+        	error "Invalid authorized_keys file for: $username"
+        	return 1
+    	fi
+
+    # If the key is already present, ensure correct permissions.
+    	if [[ -f "$authorized_keys" ]] &&
+       		grep -Fqx -- "$ssh_key" "$authorized_keys"; then
+        	chown "$username:$primary_group" "$authorized_keys" &&
+        	chmod 600 "$authorized_keys" || {
+            	error "Failed to secure authorized_keys for: $username"
+            	return 1
+        		}
+
         	log "SSH key already installed for: $username"
         	return 0
     	fi
 
-	if ! printf '%s\n' "$ssh_key" >> "$authorized_keys"; then
-        	error "Failed to install SSH key for: $username"
+    # Create a temporary file inside .ssh.
+    	temp_file="$(mktemp "$ssh_dir/.authorized_keys.XXXXXX")" || {
+        	error "Could not create temporary SSH file for: $username"
+        	return 1
+    			}
+
+    # Preserve existing keys.
+    	if [[ -f "$authorized_keys" ]]; then
+        	cat "$authorized_keys" > "$temp_file" || {
+            	rm -f "$temp_file"
+            	error "Could not copy existing SSH keys for: $username"
+            	return 1
+        		}
+    	fi
+
+    # Append the new key.
+    	if ! printf '%s\n' "$ssh_key" >> "$temp_file"; then
+        	rm -f "$temp_file"
+        	error "Failed to write SSH key for: $username"
         	return 1
     	fi
 
-    	chown "$username:$primary_group" "$authorized_keys" || return 1
-    	chmod 600 "$authorized_keys" || return 1
+    # Set secure ownership and permissions.
+    	if ! chown "$username:$primary_group" "$temp_file" ||
+       		! chmod 600 "$temp_file"; then
+        	rm -f "$temp_file"
+       		error "Failed to secure temporary SSH file for: $username"
+        	return 1
+    	fi
 
-    	log "SSH key installed for: $username"
-	
+    # Atomically replace authorized_keys.
+    	if ! mv -f -- "$temp_file" "$authorized_keys"; then
+        	rm -f "$temp_file"
+       		error "Failed to install SSH key for: $username"
+        	return 1
+    	fi
+
+    log "SSH key installed successfully for: $username"
 }
 
 provision_ssh_keys() { 
@@ -416,50 +498,107 @@ provision_ssh_keys() {
 }
 
 ensure_sudo_rule() {
+    local username="$1"
+    local sudo_file="/etc/sudoers.d/$username"
+    local rule="$username ALL=(ALL:ALL) ALL"
+    local staging_file
+    local backup_file=""
 
-	local username="$1"
-    	local sudo_file="/etc/sudoers.d/$username"
-    	local rule="$username ALL=(ALL:ALL) ALL"
-	local temp_file
+    # Check whether an existing file is managed by our script.
+    if [[ -e "$sudo_file" || -L "$sudo_file" ]]; then
 
-	if [[ "$DRY_RUN" == true ]]; then
-        	log "[DRY-RUN] Would configure sudo for: $username"
-        	return 0
-    	fi
-	temp_file="$(mktemp)" || {
+        if [[ -L "$sudo_file" || ! -f "$sudo_file" ]]; then
+            error "Refusing to overwrite non-regular sudoers file: $sudo_file"
+            return 1
+        fi
+
+        if ! grep -Fqx '# Managed by provision_users.sh' "$sudo_file"; then
+            error "Refusing to overwrite unmanaged sudoers file: $sudo_file"
+            return 1
+        fi
+    fi
+
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY-RUN] Would configure sudo for: $username"
+        return 0
+    fi
+
+    # Create a temporary file inside sudoers.d.
+    # This allows an atomic rename later.
+    staging_file="$(mktemp /etc/sudoers.d/.provision.XXXXXX)" || {
         error "Could not create temporary sudoers file."
         return 1
-    		}
+    }
 
-	{
-    	echo '# Managed by provision_users.sh'
-    	echo "$rule" 
-	} > "$temp_file" || {
-        rm -f "$temp_file"
+    {
+        echo '# Managed by provision_users.sh'
+        echo "$rule"
+    } > "$staging_file" || {
+        rm -f "$staging_file"
+        error "Could not write temporary sudoers file."
         return 1
-    	}
-	chmod 0440 "$temp_file"
-	
-	# we use visudo -c to check the syntax of permissions is ok or not, to avoid craching our server 
-	if ! visudo -cf "$temp_file" >/dev/null; then
-        	rm -f "$temp_file"
-        	error "Invalid sudo rule for: $username"
-        	return 1
-    	fi
+    }
 
-	if ! install -o root -g root -m 0440 "$temp_file" "$sudo_file"; then
-        	rm -f "$temp_file"
-        	error "Failed to install sudo rule for: $username"
-        	return 1
-    	fi
-	rm -f "$temp_file"
-	
-	if ! visudo -c >/dev/null; then
-        	error "Global sudoers validation failed."
-        	return 1
-    	fi
-	log "Sudo configured for: $username"
+    chown root:root "$staging_file" &&
+    chmod 0440 "$staging_file" || {
+        rm -f "$staging_file"
+        error "Could not set sudoers file permissions."
+        return 1
+    }
 
+    # Validate the new rule before installing it.
+    if ! visudo -cf "$staging_file" >/dev/null; then
+        rm -f "$staging_file"
+        error "Invalid sudo rule for: $username"
+        return 1
+    fi
+
+    # Back up the previous managed rule, if one exists.
+    if [[ -f "$sudo_file" ]]; then
+        backup_file="$(mktemp)" || {
+            rm -f "$staging_file"
+            error "Could not create sudoers backup."
+            return 1
+        }
+
+        cp -p "$sudo_file" "$backup_file" || {
+            rm -f "$staging_file" "$backup_file"
+            error "Could not back up existing sudo rule."
+            return 1
+        }
+    fi
+
+    # Atomically replace the destination file.
+    if ! mv -f -- "$staging_file" "$sudo_file"; then
+        rm -f "$staging_file" "$backup_file"
+        error "Failed to install sudo rule for: $username"
+        return 1
+    fi
+
+    # Validate the complete sudoers configuration.
+    if ! visudo -c >/dev/null; then
+        error "Global sudoers validation failed. Rolling back."
+
+        if [[ -n "$backup_file" ]]; then
+            install -o root -g root -m 0440 "$backup_file" "$sudo_file" || {
+                error "CRITICAL: Could not restore previous sudo rule."
+                rm -f "$backup_file"
+                return 1
+            }
+        else
+        	if ! rm -f -- "$sudo_file"; then
+        		error "CRITICAL: Could not remove invalid sudo rule: $sudo_file"
+        		rm -f "$backup_file"
+        		return 1
+    		fi
+	fi
+
+        rm -f "$backup_file"
+        return 1
+    fi
+
+    rm -f "$backup_file"
+    log "Sudo configured for: $username"
 }
 
 remove_sudo_rule() {
