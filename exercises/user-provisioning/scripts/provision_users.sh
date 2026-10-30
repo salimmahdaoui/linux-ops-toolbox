@@ -415,6 +415,73 @@ provision_ssh_keys() {
 
 }
 
+ensure_sudo_rule() {
+
+	local username="$1"
+    	local sudo_file="/etc/sudoers.d/$username"
+    	local rule="$username ALL=(ALL:ALL) ALL"
+	local temp_file
+
+	if [[ "$DRY_RUN" == true ]]; then
+        	log "[DRY-RUN] Would configure sudo for: $username"
+        	return 0
+    	fi
+	temp_file="$(mktemp)" || {
+        error "Could not create temporary sudoers file."
+        return 1
+    		}
+
+	printf '%s\n' "$rule" > "$temp_file" || {
+        rm -f "$temp_file"
+        return 1
+    		}
+	chmod 0440 "$temp_file"
+	
+	# we use visudo -c to check the syntax of permissions is ok or not, to avoid craching our server 
+	if ! visudo -cf "$temp_file" >/dev/null; then
+        	rm -f "$temp_file"
+        	error "Invalid sudo rule for: $username"
+        	return 1
+    	fi
+
+	if ! install -o root -g root -m 0440 "$temp_file" "$sudo_file"; then
+        	rm -f "$temp_file"
+        	error "Failed to install sudo rule for: $username"
+        	return 1
+    	fi
+	rm -f "$temp_file"
+	
+	if ! visudo -c >/dev/null; then
+        	error "Global sudoers validation failed."
+        	return 1
+    	fi
+	log "Sudo configured for: $username"
+
+}
+
+provision_sudo() {
+
+	local username
+    	local sudo_value
+
+	log "Starting sudo provisioning..."
+
+	while IFS= read -r username; do
+        	sudo_value="$(yq -r \
+            	".users[] | select(.username == \"$username\") | .sudo" \
+            	"$CONFIG_FILE")" || return 1
+
+        	if [[ "$sudo_value" == "true" ]]; then
+            		ensure_sudo_rule "$username" || return 1
+        	else
+           		 log "No additional sudo access requested for: $username"
+        	fi
+
+    	done < <(yq -r '.users[].username' "$CONFIG_FILE")
+
+    	log "Sudo provisioning completed."
+}
+
 main() {
 	parse_arguments "$@" || exit $?
     	check_dependencies || exit 1
@@ -429,6 +496,7 @@ main() {
 	provision_groups || exit 1
 	provision_users || exit 1
 	provision_ssh_keys || exit 1
+	provision_sudo || exit 1
 	log "Provisioning stage completed."
 }
 
