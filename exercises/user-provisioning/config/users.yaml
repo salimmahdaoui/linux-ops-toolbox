@@ -10,5 +10,12 @@ users:
     shell: /bin/bash
     groups: 
       - operations_team
-    ssh_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJxshLIeowWDsiikEtJ5C6eLroe9to+TE/GHSu5m8Y5 salimfesklffse
+    ssh_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGi0QovJ3aue0wJM1hhZKc/yWI65wjbmJ2sOZfVR4sUc salim@salim@salim-VMware-Virtual-Platform
     sudo: true
+
+  - username: lab_alice
+    shell: /bin/bash
+    groups:
+      - developers
+    ssh_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJxshLIeowWDsiikEtJ5C6eLroe9to+TE/GHSu5m8Y5 salim@salim-VMware-Virtual-Platform
+    sudo: false
